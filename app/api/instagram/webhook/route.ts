@@ -224,7 +224,7 @@ export async function POST(request: NextRequest) {
       // ---------- User resolution: direct, payload fallback, token verify ----------
       let { data: user } = await supabase
         .from("users")
-        .select("*")
+        .select("*, raw_id:id::text")
         .or(`business_account_id.eq.${webhookId},page_id.eq.${webhookId}`)
         .single()
 
@@ -244,7 +244,7 @@ export async function POST(request: NextRequest) {
           if (candidateId === webhookId) continue
           const { data: fallbackUser } = await supabase
             .from("users")
-            .select("*")
+            .select("*, raw_id:id::text")
             .or(`business_account_id.eq.${candidateId},page_id.eq.${candidateId}`)
             .single()
           if (fallbackUser) {
@@ -256,7 +256,7 @@ export async function POST(request: NextRequest) {
       }
 
       if (!user) {
-        const { data: allUsers } = await supabase.from("users").select("*")
+        const { data: allUsers } = await supabase.from("users").select("*, raw_id:id::text")
         if (allUsers) {
           for (const candidate of allUsers) {
             if (!candidate.access_token) continue
@@ -274,11 +274,15 @@ export async function POST(request: NextRequest) {
         continue
       }
 
+      const userId = user.raw_id || String(user.id)
+      user.id = userId
       const { data: automations } = await supabase
         .from("automations")
         .select("*")
-        .eq("user_id", user.id)
+        .eq("user_id", userId)
         .eq("is_active", true)
+
+      console.log(`[webhook] User resolved: @${user.username} (${userId}), active automations: ${automations?.length || 0}`)
 
       if (!automations?.length) continue
 
@@ -295,7 +299,12 @@ export async function POST(request: NextRequest) {
           const mediaId = change.value.media.id
           const parentId = change.value.parent_id || null
 
-          if (senderId === webhookId || senderId === user.business_account_id || senderId === user.page_id) continue
+          console.log(`[webhook] Comment received on media ${mediaId} from ${senderId}: "${commentText}"`)
+
+          if (senderId === webhookId || senderId === user.business_account_id || senderId === user.page_id) {
+            console.log(`[webhook] Skipping self-comment from account itself`)
+            continue
+          }
 
           const commentAutomations = automations.filter((a: any) => a.trigger_source === "comment")
 
@@ -319,7 +328,10 @@ export async function POST(request: NextRequest) {
                 keywordMatches(a.trigger_value, commentText),
             )
           }
-          if (!match) continue
+          if (!match) {
+            console.log(`[webhook] No rule match for comment "${commentText}" on media ${mediaId}`)
+            continue
+          }
 
                     const content = parseContent(match.response_content)
 
