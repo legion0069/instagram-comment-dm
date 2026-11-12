@@ -143,11 +143,16 @@ export async function POST(request: NextRequest) {
 
     console.log(`[v0] 💾 Saving user: ${username} | id=${loginUserId} | biz_id=${businessAccountId}`)
 
+    // On conflict with username or id, update the existing row
     const { error: upsertError } = await supabase
       .from("users")
-      .upsert({ id: loginUserId, ...updates }, { onConflict: "id" })
+      .upsert({ id: loginUserId, ...updates }, { onConflict: "username" })
 
-    if (upsertError) throw upsertError
+    if (upsertError) {
+      console.error("[v0] 🔴 Upsert error:", upsertError)
+      // Fallback update by username
+      await supabase.from("users").update(updates).eq("username", username)
+    }
 
     const response = NextResponse.json({ success: true, username, userId: loginUserId, profilePic })
     response.cookies.set("insta_session", JSON.stringify({ username, userId: loginUserId }), {
