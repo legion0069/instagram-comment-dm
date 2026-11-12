@@ -730,7 +730,25 @@ export async function POST(request: NextRequest) {
                         } else if (followResult.follows === false) {
                           await clearUnlockAttempts(attemptKey)
                           console.log(`[webhook] ❌ DM unlock rejected: @${senderId} still doesn't follow`)
-                          const result = await sendCardDM(user.access_token, { id: senderId }, buildFollowGateCard({ username: user.username, ruleId: match.id, title: "❌ Not Following Yet!", subtitle: `We couldn't verify your follow. Please follow @${user.username} and click the button again.` }), String(user.business_account_id))
+                          // Send casual reminder message
+                          await sendTextDM(
+                            user.access_token,
+                            { id: senderId },
+                            "Nuvvu inka follow kottale bro! 😅 Follow kottu, appude exclusive preparation links unlock avthayi. Follow kotti kindha unna button malli tap chey! 👇",
+                            undefined,
+                            String(user.business_account_id),
+                          )
+                          const result = await sendCardDM(
+                            user.access_token,
+                            { id: senderId },
+                            buildFollowGateCard({
+                              username: user.username,
+                              ruleId: match.id,
+                              title: "❌ Inka Follow Cheyaledhu!",
+                              subtitle: `Follow @${user.username} to unlock exclusive links!`,
+                            }),
+                            String(user.business_account_id),
+                          )
                           const conv = await incomingSaved
                           if (result?.ok && conv) {
                             try {
