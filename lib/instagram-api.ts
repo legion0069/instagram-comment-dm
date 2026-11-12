@@ -39,6 +39,7 @@ async function post(path: string, token: string, body: any): Promise<SendResult>
       console.error(`[ig-api] ${path} failed:`, JSON.stringify(json.error))
       return { ok: false, error: json.error || `HTTP ${res.status}` }
     }
+    console.log(`[ig-api] ✅ ${path} succeeded:`, json.id || json.message_id || json.recipient_id)
     return { ok: true, id: json.id || json.message_id || json.recipient_id }
   } catch (e) {
     console.error(`[ig-api] ${path} network error:`, e)
