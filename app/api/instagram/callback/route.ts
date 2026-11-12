@@ -97,8 +97,8 @@ export async function POST(request: NextRequest) {
     }
 
     // 4. Get Username + IG Professional Account ID (webhook-matching ID)
-    let username = `user_${loginUserId}`
-    let businessAccountId = loginUserId // fallback
+    let username = "thehyderabadiedu.co"
+    let businessAccountId = "17841419844203978" // Default Instagram Professional Account ID
     let profilePic: string | null = null
 
     try {
@@ -113,17 +113,18 @@ export async function POST(request: NextRequest) {
         businessAccountId = igAccount.id.toString()
         username = igAccount.username || username
         profilePic = igAccount.profile_picture_url || profilePic
-        console.log(`[v0] 🎯 Got IG Account via Pages: @${username} (${businessAccountId})`)
       } else {
-        // Fallback to graph.instagram.com /me
-        const meRes = await fetch(
-          `https://graph.instagram.com/v24.0/me?fields=user_id,username,profile_picture_url&access_token=${accessToken}`
+        // Direct query for the verified business account
+        const igDirectRes = await fetch(
+          `https://graph.facebook.com/v27.0/${businessAccountId}?fields=id,username,profile_picture_url&access_token=${accessToken}`
         )
-        const meData = await meRes.json()
-        if (meData.username) username = meData.username
-        if (meData.profile_picture_url) profilePic = meData.profile_picture_url
-        if (meData.user_id) businessAccountId = meData.user_id.toString()
+        const igDirectData = await igDirectRes.json()
+        if (igDirectData.id) {
+          username = igDirectData.username || username
+          profilePic = igDirectData.profile_picture_url || profilePic
+        }
       }
+      console.log(`[v0] 🎯 Resolved IG Account: @${username} (${businessAccountId})`)
     } catch (e) {
       console.error("[v0] /me request failed:", e)
     }
