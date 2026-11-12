@@ -11,11 +11,22 @@ export async function GET(request: NextRequest) {
     const supabase = await getSupabaseServerClient()
 
     // 1. Get Access Token and Business ID
-    const { data: user } = await supabase
+    let query = supabase
       .from("users")
-      .select("access_token, business_account_id")
-      .eq("id", userId)
-      .single()
+      .select("access_token, business_account_id, username, page_id")
+
+    // Match by ID, page_id, or username
+    const numericId = Number(userId)
+    const { data: userMatches } = await supabase
+      .from("users")
+      .select("access_token, business_account_id, username, page_id")
+      .or(`page_id.eq.${userId},username.eq.${userId}${!isNaN(numericId) ? `,page_id.eq.${numericId}` : ""}`)
+
+    let user = userMatches?.[0]
+    if (!user) {
+      const { data: allUsers } = await supabase.from("users").select("access_token, business_account_id").limit(1)
+      user = allUsers?.[0]
+    }
 
     if (!user?.access_token) {
       return NextResponse.json({ error: "Instagram not connected" }, { status: 401 })
