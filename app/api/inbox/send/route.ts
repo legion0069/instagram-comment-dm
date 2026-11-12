@@ -32,9 +32,10 @@ export async function POST(request: NextRequest) {
             apiBody.message = { attachment }
         }
 
-        // 3. Send to Instagram
+        // 3. Send to Instagram via Facebook Graph API
+        const bizId = user.business_account_id || "17841419844203978"
         const res = await fetch(
-            `https://graph.instagram.com/v24.0/me/messages?access_token=${user.access_token}`,
+            `https://graph.facebook.com/v24.0/${bizId}/messages?access_token=${user.access_token}`,
             {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },

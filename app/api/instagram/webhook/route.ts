@@ -101,12 +101,13 @@ async function sendAutomationResponse(
   token: string,
   recipient: { id?: string; comment_id?: string },
   content: any,
-  opts: { skipTyping?: boolean } = {},
+  opts: { skipTyping?: boolean; businessAccountId?: string } = {},
 ) {
+  const bizId = opts.businessAccountId || process.env.INSTAGRAM_BUSINESS_ACCOUNT_ID || "17841419844203978"
   const delaySeconds = Number(content.delay_seconds) || 0
   const useTyping = content.typing_indicator === true && recipient.id && !opts.skipTyping
 
-  if (useTyping) await sendSenderAction(token, recipient.id!, "typing_on")
+  if (useTyping) await sendSenderAction(token, recipient.id!, "typing_on", bizId)
   if (delaySeconds > 0) await sleep(delaySeconds * 1000)
 
   const quickReplies = Array.isArray(content.quick_replies)
@@ -117,19 +118,19 @@ async function sendAutomationResponse(
 
   let result
   if (content.media?.url) {
-    result = await sendMediaDM(token, recipient, content.media.type || "image", content.media.url)
+    result = await sendMediaDM(token, recipient, content.media.type || "image", content.media.url, bizId)
     if (result.ok && content.message) {
-      result = await sendTextDM(token, recipient, content.message, quickReplies)
+      result = await sendTextDM(token, recipient, content.message, quickReplies, bizId)
     }
   } else if (content.card) {
-    result = await sendCardDM(token, recipient, content.card)
+    result = await sendCardDM(token, recipient, content.card, bizId)
   } else if (content.message) {
-    result = await sendTextDM(token, recipient, content.message, quickReplies)
+    result = await sendTextDM(token, recipient, content.message, quickReplies, bizId)
   } else {
     result = { ok: false, error: "empty content" }
   }
 
-  if (useTyping) await sendSenderAction(token, recipient.id!, "typing_off")
+  if (useTyping) await sendSenderAction(token, recipient.id!, "typing_off", bizId)
   return result
 }
 
@@ -142,7 +143,7 @@ function responsePreviewText(content: any): string {
 
 // ============================================================
 // Instagram API Helper: Verifies actual follow status
-// API: GET https://graph.instagram.com/v21.0/{recipientId}?fields=is_user_follow_business
+// API: GET https://graph.facebook.com/v24.0/{recipientId}?fields=is_user_follow_business
 // Returns:
 //   { follows: true, error: undefined }  → confirmed following
 //   { follows: false, error: undefined } → confirmed NOT following
@@ -151,7 +152,7 @@ function responsePreviewText(content: any): string {
 // ============================================================
 async function verifyFollowStatus(igScopedId: string, pageAccessToken: string): Promise<{ follows: boolean | null; error?: 'auth' | 'transient' }> {
   try {
-    const url = `https://graph.instagram.com/v21.0/${igScopedId}?fields=is_user_follow_business&access_token=${pageAccessToken}`
+    const url = `https://graph.facebook.com/v24.0/${igScopedId}?fields=is_user_follow_business&access_token=${pageAccessToken}`
     // 5s timeout -- Graph API is fast, anything longer means trouble
     const response = await fetch(url, { signal: AbortSignal.timeout(5000) })
     if (!response.ok) {
@@ -204,6 +205,7 @@ export async function POST(request: NextRequest) {
     }
     const body = JSON.parse(rawBody)
     if (!body.entry) return NextResponse.json({ ok: true })
+    console.log("[webhook] 📥 Event received:", JSON.stringify(body))
     // Ensure schema is up-to-date on every cold start (idempotent, no-op if all tables exist)
     ensureSchema().catch((e) => console.warn("[webhook] ensureSchema failed:", e?.message))
     const supabase = await getSupabaseServerClient()
@@ -355,7 +357,7 @@ export async function POST(request: NextRequest) {
                             user.access_token,
                             { comment_id: commentId },
                             content,
-                            { skipTyping: true },
+                            { skipTyping: true, businessAccountId: String(user.business_account_id) },
                           )
                         }
                       } else if (followResult.follows === false) {
@@ -368,6 +370,7 @@ export async function POST(request: NextRequest) {
                             user.access_token,
                             { comment_id: commentId },
                             buildFollowGateCard({ username: user.username, ruleId: match.id }),
+                            String(user.business_account_id),
                           )
                         }
                       } else {
@@ -384,6 +387,7 @@ export async function POST(request: NextRequest) {
                               user.access_token,
                               { comment_id: commentId },
                               buildFollowGateCard({ username: user.username, ruleId: match.id }),
+                              String(user.business_account_id),
                             )
                           }
                         } else {
@@ -397,7 +401,7 @@ export async function POST(request: NextRequest) {
                               user.access_token,
                               { comment_id: commentId },
                               content,
-                              { skipTyping: true },
+                              { skipTyping: true, businessAccountId: String(user.business_account_id) },
                             )
                           }
                         }
@@ -412,7 +416,7 @@ export async function POST(request: NextRequest) {
                           user.access_token,
                           { comment_id: commentId },
                           content,
-                          { skipTyping: true },
+                          { skipTyping: true, businessAccountId: String(user.business_account_id) },
                         )
                       }
                     }

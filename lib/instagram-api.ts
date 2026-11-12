@@ -1,4 +1,5 @@
-const GRAPH = "https://graph.instagram.com/v24.0"
+const GRAPH = "https://graph.facebook.com/v24.0"
+const DEFAULT_BUSINESS_ACCOUNT_ID = process.env.INSTAGRAM_BUSINESS_ACCOUNT_ID || "17841419844203978"
 
 export interface IGButton {
   type: "web_url" | "postback"
@@ -38,7 +39,7 @@ async function post(path: string, token: string, body: any): Promise<SendResult>
       console.error(`[ig-api] ${path} failed:`, JSON.stringify(json.error))
       return { ok: false, error: json.error || `HTTP ${res.status}` }
     }
-    return { ok: true, id: json.id || json.message_id }
+    return { ok: true, id: json.id || json.message_id || json.recipient_id }
   } catch (e) {
     console.error(`[ig-api] ${path} network error:`, e)
     return { ok: false, error: e }
@@ -92,6 +93,7 @@ export async function sendTextDM(
   recipient: { id?: string; comment_id?: string },
   text: string,
   quickReplies?: QuickReply[],
+  businessAccountId: string = DEFAULT_BUSINESS_ACCOUNT_ID,
 ): Promise<SendResult> {
   const message: any = { text }
   if (quickReplies?.length) {
@@ -101,15 +103,16 @@ export async function sendTextDM(
       payload: q.payload,
     }))
   }
-  return post("me/messages", token, { recipient, message })
+  return post(`${businessAccountId}/messages`, token, { recipient, message })
 }
 
 export async function sendCardDM(
   token: string,
   recipient: { id?: string; comment_id?: string },
   card: IGCard,
+  businessAccountId: string = DEFAULT_BUSINESS_ACCOUNT_ID,
 ): Promise<SendResult> {
-  return post("me/messages", token, { recipient, message: buildCardAttachment(card) })
+  return post(`${businessAccountId}/messages`, token, { recipient, message: buildCardAttachment(card) })
 }
 
 export async function sendMediaDM(
@@ -117,8 +120,9 @@ export async function sendMediaDM(
   recipient: { id?: string; comment_id?: string },
   mediaType: "image" | "video" | "audio",
   url: string,
+  businessAccountId: string = DEFAULT_BUSINESS_ACCOUNT_ID,
 ): Promise<SendResult> {
-  return post("me/messages", token, {
+  return post(`${businessAccountId}/messages`, token, {
     recipient,
     message: { attachment: { type: mediaType, payload: { url } } },
   })
@@ -128,8 +132,9 @@ export async function sendSenderAction(
   token: string,
   recipientId: string,
   action: "typing_on" | "typing_off" | "mark_seen",
+  businessAccountId: string = DEFAULT_BUSINESS_ACCOUNT_ID,
 ): Promise<SendResult> {
-  return post("me/messages", token, { recipient: { id: recipientId }, sender_action: action })
+  return post(`${businessAccountId}/messages`, token, { recipient: { id: recipientId }, sender_action: action })
 }
 
 export async function sendMessageReaction(
@@ -137,8 +142,9 @@ export async function sendMessageReaction(
   recipientId: string,
   messageId: string,
   reaction = "love",
+  businessAccountId: string = DEFAULT_BUSINESS_ACCOUNT_ID,
 ): Promise<SendResult> {
-  return post("me/messages", token, {
+  return post(`${businessAccountId}/messages`, token, {
     recipient: { id: recipientId },
     sender_action: "react",
     payload: { message_id: messageId, reaction },
