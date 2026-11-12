@@ -23,20 +23,25 @@ export function LandingPage() {
   }, [])
 
   const handleLogin = () => {
-    const appId = process.env.NEXT_PUBLIC_INSTAGRAM_APP_ID
-    const redirectUri = process.env.NEXT_PUBLIC_INSTAGRAM_REDIRECT_URI
+    const appId = process.env.NEXT_PUBLIC_INSTAGRAM_APP_ID || "2571033123396282"
+    // Dynamically use the current browser origin so redirect_uri always matches the active domain
+    const redirectUri =
+      typeof window !== "undefined"
+        ? `${window.location.origin}/api/instagram/callback`
+        : process.env.NEXT_PUBLIC_INSTAGRAM_REDIRECT_URI || "http://localhost:3000/api/instagram/callback"
     const configId = process.env.NEXT_PUBLIC_META_CONFIG_ID || "1651431356616358"
 
     if (configId) {
       window.location.href = `https://www.facebook.com/dialog/oauth?client_id=${appId}&config_id=${configId}&redirect_uri=${encodeURIComponent(
-        redirectUri || ""
+        redirectUri
       )}&response_type=code`
       return
     }
 
-    // Instagram Business Login (Instagram API with Instagram Login). client_id must be the
-    // Instagram app ID from the Instagram product page, not the parent Meta app ID.
-    window.location.href = `https://www.instagram.com/oauth/authorize?enable_fb_login=0&force_authentication=1&client_id=${process.env.NEXT_PUBLIC_INSTAGRAM_APP_ID}&redirect_uri=${process.env.NEXT_PUBLIC_INSTAGRAM_REDIRECT_URI}&response_type=code&scope=instagram_business_basic%2Cinstagram_business_manage_messages%2Cinstagram_business_manage_comments`
+    // Instagram Business Login (Instagram API with Instagram Login)
+    window.location.href = `https://www.instagram.com/oauth/authorize?enable_fb_login=0&force_authentication=1&client_id=${appId}&redirect_uri=${encodeURIComponent(
+      redirectUri
+    )}&response_type=code&scope=instagram_business_basic%2Cinstagram_business_manage_messages%2Cinstagram_business_manage_comments`
   }
 
   const handleTestLogin = () => {

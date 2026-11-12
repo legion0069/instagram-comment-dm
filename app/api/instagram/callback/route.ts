@@ -28,9 +28,13 @@ export async function POST(request: NextRequest) {
     if (!code) return NextResponse.json({ error: "No code" }, { status: 400 })
 
     // 1. Env Vars
-    const clientId = process.env.INSTAGRAM_APP_ID
-    const clientSecret = process.env.INSTAGRAM_APP_SECRET
-    const redirectUri = process.env.NEXT_PUBLIC_INSTAGRAM_REDIRECT_URI
+    const clientId = process.env.INSTAGRAM_APP_ID || "2571033123396282"
+    const clientSecret = process.env.INSTAGRAM_APP_SECRET || process.env.META_APP_SECRET
+    // Dynamically derive redirect_uri from request host if not set or mismatched
+    const requestHost = request.headers.get("x-forwarded-host") || request.headers.get("host")
+    const requestProto = request.headers.get("x-forwarded-proto") || "https"
+    const dynamicRedirectUri = requestHost ? `${requestProto}://${requestHost}/api/instagram/callback` : ""
+    const redirectUri = process.env.NEXT_PUBLIC_INSTAGRAM_REDIRECT_URI || dynamicRedirectUri
 
     if (!clientId || !clientSecret || !redirectUri) {
       throw new Error("Missing Env Vars: Check INSTAGRAM_APP_ID")
