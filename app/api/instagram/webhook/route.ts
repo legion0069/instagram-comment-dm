@@ -638,6 +638,14 @@ export async function POST(request: NextRequest) {
                     }
 
                     if (!match) {
+                      // Smart fallback: if user replies with text like "followed", "done", "link", etc.
+                      const lower = triggerValue.toLowerCase()
+                      if (lower.includes("follow") || lower.includes("done") || lower.includes("link") || lower.includes("yes") || lower === "🙌") {
+                        match = automations[0]
+                      }
+                    }
+
+                    if (!match) {
                       // AI fallback: if no keyword rule matched, try AI auto-reply
                       if (user.groq_auto_reply_enabled && triggerType !== "postback") {
                         console.log(`[webhook] 🤖 No rule match — trying AI auto-reply for DM from ${senderId}`)
