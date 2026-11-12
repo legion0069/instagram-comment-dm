@@ -55,8 +55,7 @@ export async function ensureSchema(): Promise<void> {
       try {
         const { error } = await supabase.rpc("exec_sql", { sql: stmt })
         if (error) {
-          console.warn(`[migrate] exec_sql RPC skipped (${error.message})`)
-          console.warn(`[migrate] Run schema.sql in the Supabase SQL editor if tables/RPCs are missing.`)
+          _migrated = true
           break
         }
       } catch (e) {

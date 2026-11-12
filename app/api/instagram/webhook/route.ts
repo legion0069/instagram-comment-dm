@@ -75,15 +75,20 @@ function pickRandom<T>(arr: T[]): T {
 }
 
 function keywordMatches(triggerValue: string, text: string): boolean {
+  if (!triggerValue || !text) return false
   return triggerValue
     .split(",")
     .map((k: string) => k.trim())
     .filter(Boolean)
     .some((k: string) => {
       try {
-        return new RegExp(`\\b${k.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "i").test(text)
+        const isWord = /^\w+$/.test(k)
+        if (isWord) {
+          return new RegExp(`\\b${k.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "i").test(text)
+        }
+        return text.toLowerCase().includes(k.toLowerCase())
       } catch {
-        return text.includes(k.toLowerCase())
+        return text.toLowerCase().includes(k.toLowerCase())
       }
     })
 }
