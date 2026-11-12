@@ -19,9 +19,13 @@ export function useInstagramSession() {
             // CASE A: New Login from Instagram
             if (code) {
                 try {
+                    const redirectUri = typeof window !== "undefined"
+                        ? `${window.location.origin}/api/instagram/callback`
+                        : undefined
                     const res = await fetch("/api/instagram/callback", {
                         method: "POST",
-                        body: JSON.stringify({ code }),
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ code, redirectUri }),
                     })
                     const data = await res.json()
 
