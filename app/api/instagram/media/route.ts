@@ -16,11 +16,10 @@ export async function GET(request: NextRequest) {
       .select("access_token, business_account_id, username, page_id")
 
     // Match by ID, page_id, or username
-    const numericId = Number(userId)
     const { data: userMatches } = await supabase
       .from("users")
       .select("access_token, business_account_id, username, page_id")
-      .or(`page_id.eq.${userId},username.eq.${userId}${!isNaN(numericId) ? `,page_id.eq.${numericId}` : ""}`)
+      .or(`id.eq.${userId},page_id.eq.${userId},username.eq.${userId}`)
 
     let user = userMatches?.[0]
     if (!user) {
