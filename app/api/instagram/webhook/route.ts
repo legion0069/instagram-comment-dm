@@ -147,17 +147,22 @@ function responsePreviewText(content: any): string {
 // Returns:
 //   { follows: true, error: undefined }  → confirmed following
 //   { follows: false, error: undefined } → confirmed NOT following
-//   { follows: null, error: 'auth' } → auth/permission failure (401, 403) — fail CLOSED
-//   { follows: null, error: 'transient' } → transient failure (5xx, timeout) — fail OPEN
+//   { follows: null, error: 'consent' }  → Meta Error 230 (comment user consent restriction)
+//   { follows: null, error: 'auth' }     → auth/permission failure (401, 403)
+//   { follows: null, error: 'transient' }→ transient failure (5xx, timeout)
 // ============================================================
-async function verifyFollowStatus(igScopedId: string, pageAccessToken: string): Promise<{ follows: boolean | null; error?: 'auth' | 'transient' }> {
+async function verifyFollowStatus(igScopedId: string, pageAccessToken: string): Promise<{ follows: boolean | null; error?: 'auth' | 'transient' | 'consent' }> {
   try {
     const url = `https://graph.facebook.com/v24.0/${igScopedId}?fields=is_user_follow_business&access_token=${pageAccessToken}`
     // 5s timeout -- Graph API is fast, anything longer means trouble
     const response = await fetch(url, { signal: AbortSignal.timeout(5000) })
     if (!response.ok) {
-      const errorText = await response.text()
-      console.error(`[webhook] Follow status check failed: ${response.status} ${errorText}`)
+      const errorData = await response.json().catch(() => null)
+      if (errorData?.error?.code === 230) {
+        console.warn(`[webhook] Follow check: Meta returned (#230) User consent is required for @${igScopedId} (standard on comments before DM interaction)`)
+        return { follows: null, error: 'consent' }
+      }
+      console.error(`[webhook] Follow status check failed: ${response.status}`, JSON.stringify(errorData))
       // Distinguish auth failures (fail closed) from transient (fail open)
       if (response.status === 401 || response.status === 403) {
         return { follows: null, error: 'auth' }
@@ -171,11 +176,6 @@ async function verifyFollowStatus(igScopedId: string, pageAccessToken: string): 
     return { follows, error: undefined }
   } catch (error: any) {
     console.error("[webhook] Error checking follow status:", error)
-    // AbortSignal.timeout throws AbortError/TimeoutError -- both are transient
-    if (error?.name === "AbortError" || error?.name === "TimeoutError") {
-      return { follows: null, error: 'transient' }
-    }
-    // Network error → transient, fail open
     return { follows: null, error: 'transient' }
   }
 }
@@ -386,10 +386,10 @@ export async function POST(request: NextRequest) {
                           )
                         }
                       } else {
-                        // null → unverifiable. Distinguish auth vs transient.
-                        const isAuthError = followResult.error === 'auth'
-                        if (isAuthError) {
-                          // Auth/permission failure — fail CLOSED: send gate card
+                        // null → unverifiable.
+                        // Real auth failure (e.g. invalid app token) fails closed.
+                        // Meta Error 230 (comment user consent restriction) or transient failures fail OPEN so users get their content!
+                        if (followResult.error === 'auth') {
                           console.warn(`[webhook] ⚠️ Comment follower gate auth failure for @${senderId}; sending gate`)
                           if (replyMode !== "dm_only") {
                             await replyToComment(user.access_token, commentId, getPublicReply())
@@ -403,8 +403,7 @@ export async function POST(request: NextRequest) {
                             )
                           }
                         } else {
-                          // Transient failure — fail OPEN: deliver content (with public reply if allowed)
-                          console.warn(`[webhook] ⚠️ Comment follower gate transient failure for @${senderId}; failing open`)
+                          console.log(`[webhook] 🚀 Comment follower check unverifiable (${followResult.error || 'transient'}) — delivering content directly to @${senderId}`)
                           if (replyMode !== "dm_only") {
                             await replyToComment(user.access_token, commentId, getPublicReply())
                           }
@@ -703,7 +702,7 @@ export async function POST(request: NextRequest) {
                         if (followResult.follows === true) {
                           await clearUnlockAttempts(attemptKey)
                           console.log(`[webhook] ✅ DM unlock verified for @${senderId}`)
-                          const result = await sendAutomationResponse(user.access_token, { id: senderId }, content)
+                          const result = await sendAutomationResponse(user.access_token, { id: senderId }, content, { businessAccountId: String(user.business_account_id) })
                           const conv = await incomingSaved
                           if (result?.ok && conv) {
                             try {
@@ -723,7 +722,7 @@ export async function POST(request: NextRequest) {
                         } else if (followResult.follows === false) {
                           await clearUnlockAttempts(attemptKey)
                           console.log(`[webhook] ❌ DM unlock rejected: @${senderId} still doesn't follow`)
-                          const result = await sendCardDM(user.access_token, { id: senderId }, buildFollowGateCard({ username: user.username, ruleId: match.id, title: "❌ Not Following Yet!", subtitle: `We couldn't verify your follow. Please follow @${user.username} and click the button again.` }))
+                          const result = await sendCardDM(user.access_token, { id: senderId }, buildFollowGateCard({ username: user.username, ruleId: match.id, title: "❌ Not Following Yet!", subtitle: `We couldn't verify your follow. Please follow @${user.username} and click the button again.` }), String(user.business_account_id))
                           const conv = await incomingSaved
                           if (result?.ok && conv) {
                             try {
