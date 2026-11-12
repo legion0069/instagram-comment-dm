@@ -10,10 +10,10 @@ export async function GET(request: NextRequest) {
 
     const supabase = await getSupabaseServerClient()
 
-    // 1. Get Access Token
+    // 1. Get Access Token and Business ID
     const { data: user } = await supabase
       .from("users")
-      .select("access_token") // Business ID ki zaroorat nahi hai ab
+      .select("access_token, business_account_id")
       .eq("id", userId)
       .single()
 
@@ -21,15 +21,19 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: "Instagram not connected" }, { status: 401 })
     }
 
-    // 2. Fetch Media (Smart Method: /me/media)
-    // Ye 'instagram.com' use karega jo aapke token ke saath compatible hai.
-    // Hum '/me' use kar rahe hain taaki ID mismatch ka lafda hi na ho.
-    const url = `https://graph.instagram.com/me/media?fields=id,caption,media_type,media_url,thumbnail_url,permalink,timestamp&limit=24&access_token=${user.access_token}`
+    // 2. Fetch Media (Supports Unified Graph API and Instagram Graph API)
+    const igId = user.business_account_id || "17841419844203978"
+    const fbUrl = `https://graph.facebook.com/v27.0/${igId}/media?fields=id,caption,media_type,media_url,thumbnail_url,permalink,timestamp&limit=24&access_token=${user.access_token}`
+    const igUrl = `https://graph.instagram.com/me/media?fields=id,caption,media_type,media_url,thumbnail_url,permalink,timestamp&limit=24&access_token=${user.access_token}`
 
-    console.log("[v0] Fetching Media from:", url)
+    let res = await fetch(fbUrl, { cache: "no-store" })
+    let data = await res.json()
 
-    const res = await fetch(url, { cache: 'no-store' })
-    const data = await res.json()
+    if (data.error) {
+      console.warn("[v0] Facebook media endpoint returned error, trying Instagram fallback:", data.error.message)
+      res = await fetch(igUrl, { cache: "no-store" })
+      data = await res.json()
+    }
 
     if (data.error) {
       console.error("[v0] Instagram Media Error:", data.error)
