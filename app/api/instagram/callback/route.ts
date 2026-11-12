@@ -36,40 +36,65 @@ export async function POST(request: NextRequest) {
       throw new Error("Missing Env Vars: Check INSTAGRAM_APP_ID")
     }
 
-    // 2. Exchange Code for Short Token
-    const tokenParams = new URLSearchParams({
-      client_id: clientId,
-      client_secret: clientSecret,
-      grant_type: "authorization_code",
-      redirect_uri: redirectUri,
-      code,
-    })
+    // 2. Exchange Code for Token (supports Unified Facebook Login & Instagram Login)
+    const isUnified = Boolean(process.env.NEXT_PUBLIC_META_CONFIG_ID || process.env.META_CONFIG_ID)
+    let accessToken: string
+    let expiresIn: number
+    let loginUserId: string
 
-    const tokenRes = await fetch("https://api.instagram.com/oauth/access_token", {
-      method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body: tokenParams.toString(),
-    })
+    if (isUnified) {
+      const fbTokenUrl = `https://graph.facebook.com/v27.0/oauth/access_token?client_id=${clientId}&client_secret=${clientSecret}&redirect_uri=${encodeURIComponent(
+        redirectUri
+      )}&code=${code}`
+      const fbTokenRes = await fetch(fbTokenUrl)
+      const fbTokenData = await fbTokenRes.json()
 
-    const tokenData = await tokenRes.json()
-    if (!tokenRes.ok) {
-      if (tokenData.error_message?.includes("authorization code has been used")) {
-        // Harmless double-fire from React StrictMode or double clicks
-        return NextResponse.json({ error: "Code already used" }, { status: 400 })
+      if (!fbTokenRes.ok) {
+        console.error("[v0] 🔴 Unified Token Error:", JSON.stringify(fbTokenData, null, 2))
+        return NextResponse.json({ error: fbTokenData.error?.message || "Token failed" }, { status: 400 })
       }
-      console.error("[v0] 🔴 Token Error:", JSON.stringify(tokenData, null, 2))
-      return NextResponse.json({ error: tokenData.error_description || "Token failed" }, { status: 400 })
+
+      accessToken = fbTokenData.access_token
+      expiresIn = fbTokenData.expires_in || 5184000
+
+      // Get user ID from graph.facebook.com
+      const meFbRes = await fetch(`https://graph.facebook.com/v27.0/me?access_token=${accessToken}`)
+      const meFbData = await meFbRes.json()
+      loginUserId = (meFbData.id || "unified_user").toString()
+    } else {
+      const tokenParams = new URLSearchParams({
+        client_id: clientId,
+        client_secret: clientSecret,
+        grant_type: "authorization_code",
+        redirect_uri: redirectUri,
+        code,
+      })
+
+      const tokenRes = await fetch("https://api.instagram.com/oauth/access_token", {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: tokenParams.toString(),
+      })
+
+      const tokenData = await tokenRes.json()
+      if (!tokenRes.ok) {
+        if (tokenData.error_message?.includes("authorization code has been used")) {
+          return NextResponse.json({ error: "Code already used" }, { status: 400 })
+        }
+        console.error("[v0] 🔴 Token Error:", JSON.stringify(tokenData, null, 2))
+        return NextResponse.json({ error: tokenData.error_description || "Token failed" }, { status: 400 })
+      }
+
+      const shortToken = tokenData.access_token
+      loginUserId = tokenData.user_id.toString()
+
+      // Exchange for Long Token (60 Days)
+      const longLivedUrl = `https://graph.instagram.com/access_token?grant_type=ig_exchange_token&client_secret=${clientSecret}&access_token=${shortToken}`
+      const longRes = await fetch(longLivedUrl)
+      const longData = await longRes.json()
+      accessToken = longData.access_token || shortToken
+      expiresIn = longData.expires_in || 5184000
     }
-
-    const shortToken = tokenData.access_token
-    const loginUserId = tokenData.user_id.toString()
-
-    // 3. Exchange for Long Token (60 Days)
-    const longLivedUrl = `https://graph.instagram.com/access_token?grant_type=ig_exchange_token&client_secret=${clientSecret}&access_token=${shortToken}`
-    const longRes = await fetch(longLivedUrl)
-    const longData = await longRes.json()
-    const accessToken = longData.access_token || shortToken
-    const expiresIn = longData.expires_in || 5184000
 
     // 4. Get Username + IG Professional Account ID (webhook-matching ID)
     // Per Meta docs: /me?fields=user_id returns the IG_ID that matches webhook entry.id
