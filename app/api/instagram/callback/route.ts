@@ -37,7 +37,7 @@ export async function POST(request: NextRequest) {
     }
 
     // 2. Exchange Code for Token (supports Unified Facebook Login & Instagram Login)
-    const isUnified = Boolean(process.env.NEXT_PUBLIC_META_CONFIG_ID || process.env.META_CONFIG_ID)
+    const isUnified = true // DM Automation uses Facebook Login for Business / Unified login with Configuration ID
     let accessToken: string
     let expiresIn: number
     let loginUserId: string
@@ -97,26 +97,32 @@ export async function POST(request: NextRequest) {
     }
 
     // 4. Get Username + IG Professional Account ID (webhook-matching ID)
-    // Per Meta docs: /me?fields=user_id returns the IG_ID that matches webhook entry.id
-    // https://developers.facebook.com/docs/instagram-platform/instagram-api-with-instagram-login/get-started
     let username = `user_${loginUserId}`
     let businessAccountId = loginUserId // fallback
     let profilePic: string | null = null
 
     try {
-      const meRes = await fetch(
-        `https://graph.instagram.com/v24.0/me?fields=user_id,username,profile_picture_url&access_token=${accessToken}`
+      // First try graph.facebook.com to resolve connected Instagram Business accounts
+      const accountsRes = await fetch(
+        `https://graph.facebook.com/v27.0/me/accounts?fields=id,name,instagram_business_account{id,username,profile_picture_url}&access_token=${accessToken}`
       )
-      const meData = await meRes.json()
-      console.log("[v0] 📋 /me response:", JSON.stringify(meData))
+      const accountsData = await accountsRes.json()
+      const igAccount = accountsData?.data?.find((a: any) => a.instagram_business_account)?.instagram_business_account
 
-      if (meData.username) username = meData.username
-      if (meData.profile_picture_url) profilePic = meData.profile_picture_url
-      if (meData.user_id) {
-        businessAccountId = meData.user_id.toString()
-        console.log(`[v0] 🎯 Got IG Professional Account ID (user_id): ${businessAccountId}`)
+      if (igAccount?.id) {
+        businessAccountId = igAccount.id.toString()
+        username = igAccount.username || username
+        profilePic = igAccount.profile_picture_url || profilePic
+        console.log(`[v0] 🎯 Got IG Account via Pages: @${username} (${businessAccountId})`)
       } else {
-        console.warn(`[v0] ⚠️ /me did not return user_id, using loginUserId: ${loginUserId}`)
+        // Fallback to graph.instagram.com /me
+        const meRes = await fetch(
+          `https://graph.instagram.com/v24.0/me?fields=user_id,username,profile_picture_url&access_token=${accessToken}`
+        )
+        const meData = await meRes.json()
+        if (meData.username) username = meData.username
+        if (meData.profile_picture_url) profilePic = meData.profile_picture_url
+        if (meData.user_id) businessAccountId = meData.user_id.toString()
       }
     } catch (e) {
       console.error("[v0] /me request failed:", e)
