@@ -299,12 +299,27 @@ export async function POST(request: NextRequest) {
           const mediaId = change.value.media.id
           const parentId = change.value.parent_id || null
 
-          console.log(`[webhook] Comment received on media ${mediaId} from ${senderId}: "${commentText}"`)
+          // 1. Skip nested replies (Instagram Graph API does not support replying to sub-replies or private DM on sub-replies)
+          if (parentId) {
+            console.log(`[webhook] Skipping nested comment reply ${commentId}`)
+            continue
+          }
 
+          // 2. Skip self-comments from the account itself
           if (senderId === webhookId || senderId === user.business_account_id || senderId === user.page_id) {
             console.log(`[webhook] Skipping self-comment from account itself`)
             continue
           }
+
+          // 3. Atomic Deduplication: Prevent duplicate API calls on Meta webhook retries
+          const dedupeKey = `cmt_${commentId}`
+          const { error: dedupeErr } = await supabase.from("unlock_attempts").insert({ key: dedupeKey, count: 1 })
+          if (dedupeErr) {
+            console.log(`[webhook] ⏭️ Comment ${commentId} already processed, skipping duplicate`)
+            continue
+          }
+
+          console.log(`[webhook] Comment received on media ${mediaId} from ${senderId}: "${commentText}"`)
 
           const commentAutomations = automations.filter((a: any) => a.trigger_source === "comment")
 
