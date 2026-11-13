@@ -284,6 +284,33 @@ export async function POST(request: NextRequest) {
 
       console.log(`[webhook] User resolved: @${user.username} (${userId}), active automations: ${automations?.length || 0}`)
 
+      // Lightweight queue drainer: send 1 pending queued DM if send_at has arrived
+      try {
+        const { data: queued } = await supabase
+          .from("dm_queue")
+          .select("*")
+          .eq("user_id", userId)
+          .eq("status", "pending")
+          .lte("send_at", new Date().toISOString())
+          .limit(1)
+
+        if (queued && queued.length > 0) {
+          const item = queued[0]
+          const qRes = await sendTextDM(item.access_token, { id: item.recipient_id }, item.message, undefined, String(user.business_account_id))
+          if (qRes.ok) {
+            await supabase.from("dm_queue").update({ status: "sent" }).eq("id", item.id)
+            console.log(`[queue] ✅ Delivered queued DM to ${item.recipient_id}`)
+          } else if (qRes.error?.code === 4) {
+            await supabase.from("dm_queue").update({
+              send_at: new Date(Date.now() + 5 * 60 * 1000).toISOString(),
+              attempts: (item.attempts || 0) + 1,
+            }).eq("id", item.id)
+          }
+        }
+      } catch (err) {
+        // Non-blocking queue drainer
+      }
+
       if (!automations?.length) continue
 
       // ============================================================
@@ -423,12 +450,23 @@ export async function POST(request: NextRequest) {
                             await replyToComment(user.access_token, commentId, getPublicReply())
                           }
                           if (replyMode !== "public_only") {
-                            await sendAutomationResponse(
+                            const res = await sendAutomationResponse(
                               user.access_token,
                               { comment_id: commentId },
                               content,
                               { skipTyping: true, businessAccountId: String(user.business_account_id) },
                             )
+                            if (!res.ok && res.error?.code === 4 && content.message) {
+                              console.log(`[webhook] 📥 Queuing message for sender ${senderId} due to Meta rate limit`)
+                              await supabase.from("dm_queue").insert({
+                                user_id: userId,
+                                recipient_id: senderId,
+                                access_token: user.access_token,
+                                message: content.message,
+                                send_at: new Date(Date.now() + 5 * 60 * 1000).toISOString(),
+                                status: "pending",
+                              }).catch(() => {})
+                            }
                           }
                         }
                       }
@@ -438,12 +476,23 @@ export async function POST(request: NextRequest) {
                         await replyToComment(user.access_token, commentId, getPublicReply())
                       }
                       if (replyMode !== "public_only") {
-                        await sendAutomationResponse(
+                        const res = await sendAutomationResponse(
                           user.access_token,
                           { comment_id: commentId },
                           content,
                           { skipTyping: true, businessAccountId: String(user.business_account_id) },
                         )
+                        if (!res.ok && res.error?.code === 4 && content.message) {
+                          console.log(`[webhook] 📥 Queuing message for sender ${senderId} due to Meta rate limit`)
+                          await supabase.from("dm_queue").insert({
+                            user_id: userId,
+                            recipient_id: senderId,
+                            access_token: user.access_token,
+                            message: content.message,
+                            send_at: new Date(Date.now() + 5 * 60 * 1000).toISOString(),
+                            status: "pending",
+                          }).catch(() => {})
+                        }
                       }
                     }
         }
