@@ -37,7 +37,8 @@ async function post(path: string, token: string, body: any): Promise<SendResult>
     const json = await res.json()
     if (!res.ok || json.error) {
       if (json.error?.code === 4 || json.error?.code === 32 || json.error?.code === 17) {
-        console.warn(`[ig-api] ⚠️ Meta Rate Limit Reached (#${json.error.code}): ${json.error.message}`)
+        const usage = res.headers.get("x-business-use-case-usage") || res.headers.get("x-app-usage") || "none"
+        console.warn(`[ig-api] ⚠️ Meta Rate Limit Reached (#${json.error.code}): ${json.error.message} | Usage header: ${usage}`)
       } else {
         console.error(`[ig-api] ${path} failed:`, JSON.stringify(json.error))
       }
