@@ -326,15 +326,14 @@ export async function POST(request: NextRequest) {
           const mediaId = change.value.media.id
           const parentId = change.value.parent_id || null
 
-          // 1. Skip nested replies (Instagram Graph API does not support replying to sub-replies or private DM on sub-replies)
-          if (parentId) {
-            console.log(`[webhook] Skipping nested comment reply ${commentId}`)
-            continue
-          }
-
-          // 2. Skip self-comments from the account itself
-          if (senderId === webhookId || senderId === user.business_account_id || senderId === user.page_id) {
-            console.log(`[webhook] Skipping self-comment from account itself`)
+          // 1. Skip self-comments from the account itself (including bot's own replies)
+          const isSelf =
+            String(senderId) === String(webhookId) ||
+            String(senderId) === String(user.business_account_id) ||
+            String(senderId) === String(user.page_id) ||
+            String(senderId) === String(user.id)
+          if (isSelf) {
+            console.log(`[webhook] Skipping self-comment from account itself (${senderId})`)
             continue
           }
 
@@ -377,8 +376,11 @@ export async function POST(request: NextRequest) {
 
                     const content = parseContent(match.response_content)
 
-                    // Skip nested replies unless user opted in
-                    if (parentId && content.include_replies !== true) continue
+                    // Only skip nested replies if user explicitly opted out (include_replies === false)
+                    if (parentId && content.include_replies === false) {
+                      console.log(`[webhook] Skipping nested comment reply ${commentId} (include_replies is disabled)`)
+                      continue
+                    }
 
                     console.log(`[webhook] ✅ Comment match: "${match.name}"`)
 
@@ -394,106 +396,102 @@ export async function POST(request: NextRequest) {
                       return pickRandom(pool)
                     }
 
+                    // Helper to safely send public reply without failing the whole flow
+                    const sendPublicReplySafe = async () => {
+                      if (replyMode === "dm_only") return
+                      try {
+                        await replyToComment(user.access_token, commentId, getPublicReply())
+                      } catch (err) {
+                        console.warn(`[webhook] Public reply to comment ${commentId} failed:`, err)
+                      }
+                    }
+
+                    // Helper to send DM with fallback from comment_id to direct senderId
+                    // This ensures that even if a user comments multiple times, or if Meta restricts multiple private replies via comment_id, the DM is delivered directly.
+                    const sendCommentDMSafe = async (body: any) => {
+                      if (replyMode === "public_only") return { ok: true }
+                      let res = await sendAutomationResponse(
+                        user.access_token,
+                        { comment_id: commentId },
+                        body,
+                        { skipTyping: true, businessAccountId: String(user.business_account_id) },
+                      )
+                      if (!res.ok && senderId) {
+                        console.log(`[webhook] Comment DM via comment_id was not accepted (${JSON.stringify(res.error)}), trying direct senderId @${senderId}...`)
+                        const directRes = await sendAutomationResponse(
+                          user.access_token,
+                          { id: senderId },
+                          body,
+                          { skipTyping: true, businessAccountId: String(user.business_account_id) },
+                        )
+                        if (directRes.ok) res = directRes
+                      }
+                      if (!res.ok && res.error?.code === 4 && body.message) {
+                        console.log(`[webhook] 📥 Queuing message for sender ${senderId} due to Meta rate limit`)
+                        try {
+                          await supabase.from("dm_queue").insert({
+                            user_id: String(userId),
+                            recipient_id: senderId,
+                            access_token: user.access_token,
+                            message: body.message,
+                            send_at: new Date(Date.now() + 5 * 60 * 1000).toISOString(),
+                            status: "pending",
+                          })
+                        } catch (qErr) {
+                          console.warn("[webhook] Failed to queue rate-limited message:", qErr)
+                        }
+                      }
+                      return res
+                    }
+
+                    const sendCardDMSafe = async (card: any) => {
+                      if (replyMode === "public_only") return { ok: true }
+                      let res = await sendCardDM(
+                        user.access_token,
+                        { comment_id: commentId },
+                        card,
+                        String(user.business_account_id),
+                      )
+                      if (!res.ok && senderId) {
+                        const directRes = await sendCardDM(
+                          user.access_token,
+                          { id: senderId },
+                          card,
+                          String(user.business_account_id),
+                        )
+                        if (directRes.ok) res = directRes
+                      }
+                      return res
+                    }
+
                     // ===== FOLLOWER GATE FOR COMMENTS =====
-                    // The gate card is delivered as a *private reply* to the comment. recipient.id
-                    // alone won't open a DM with someone who has never messaged the account; private
-                    // replies to a comment need comment_id.
                     if (content.check_follow === true) {
                       const followResult = await verifyFollowStatus(senderId, user.access_token)
 
                       if (followResult.follows === true) {
                         console.log(`[webhook] ✅ Comment follower gate: @${senderId} follows @${user.username} — sending content`)
-                        if (replyMode !== "dm_only") {
-                          await replyToComment(user.access_token, commentId, getPublicReply())
-                        }
-                        if (replyMode !== "public_only") {
-                          await sendAutomationResponse(
-                            user.access_token,
-                            { comment_id: commentId },
-                            content,
-                            { skipTyping: true, businessAccountId: String(user.business_account_id) },
-                          )
-                        }
+                        await sendPublicReplySafe()
+                        await sendCommentDMSafe(content)
                       } else if (followResult.follows === false) {
                         console.log(`[webhook] 🔒 Comment follower gate: @${senderId} doesn't follow @${user.username}`)
-                        if (replyMode !== "dm_only") {
-                          await replyToComment(user.access_token, commentId, getPublicReply())
-                        }
-                        if (replyMode !== "public_only") {
-                          await sendCardDM(
-                            user.access_token,
-                            { comment_id: commentId },
-                            buildFollowGateCard({ username: user.username, ruleId: match.id }),
-                            String(user.business_account_id),
-                          )
-                        }
+                        await sendPublicReplySafe()
+                        await sendCardDMSafe(buildFollowGateCard({ username: user.username, ruleId: match.id }))
                       } else {
                         // null → unverifiable.
-                        // Real auth failure (e.g. invalid app token) fails closed.
-                        // Meta Error 230 (comment user consent restriction) or transient failures fail OPEN so users get their content!
                         if (followResult.error === 'auth') {
                           console.warn(`[webhook] ⚠️ Comment follower gate auth failure for @${senderId}; sending gate`)
-                          if (replyMode !== "dm_only") {
-                            await replyToComment(user.access_token, commentId, getPublicReply())
-                          }
-                          if (replyMode !== "public_only") {
-                            await sendCardDM(
-                              user.access_token,
-                              { comment_id: commentId },
-                              buildFollowGateCard({ username: user.username, ruleId: match.id }),
-                              String(user.business_account_id),
-                            )
-                          }
+                          await sendPublicReplySafe()
+                          await sendCardDMSafe(buildFollowGateCard({ username: user.username, ruleId: match.id }))
                         } else {
                           console.log(`[webhook] 🚀 Comment follower check unverifiable (${followResult.error || 'transient'}) — delivering content directly to @${senderId}`)
-                          if (replyMode !== "dm_only") {
-                            await replyToComment(user.access_token, commentId, getPublicReply())
-                          }
-                          if (replyMode !== "public_only") {
-                            const res = await sendAutomationResponse(
-                              user.access_token,
-                              { comment_id: commentId },
-                              content,
-                              { skipTyping: true, businessAccountId: String(user.business_account_id) },
-                            )
-                            if (!res.ok && res.error?.code === 4 && content.message) {
-                              console.log(`[webhook] 📥 Queuing message for sender ${senderId} due to Meta rate limit`)
-                              await supabase.from("dm_queue").insert({
-                                user_id: userId,
-                                recipient_id: senderId,
-                                access_token: user.access_token,
-                                message: content.message,
-                                send_at: new Date(Date.now() + 5 * 60 * 1000).toISOString(),
-                                status: "pending",
-                              }).catch(() => {})
-                            }
-                          }
+                          await sendPublicReplySafe()
+                          await sendCommentDMSafe(content)
                         }
                       }
                     } else {
                       // No follower check required — send normally
-                      if (replyMode !== "dm_only") {
-                        await replyToComment(user.access_token, commentId, getPublicReply())
-                      }
-                      if (replyMode !== "public_only") {
-                        const res = await sendAutomationResponse(
-                          user.access_token,
-                          { comment_id: commentId },
-                          content,
-                          { skipTyping: true, businessAccountId: String(user.business_account_id) },
-                        )
-                        if (!res.ok && res.error?.code === 4 && content.message) {
-                          console.log(`[webhook] 📥 Queuing message for sender ${senderId} due to Meta rate limit`)
-                          await supabase.from("dm_queue").insert({
-                            user_id: userId,
-                            recipient_id: senderId,
-                            access_token: user.access_token,
-                            message: content.message,
-                            send_at: new Date(Date.now() + 5 * 60 * 1000).toISOString(),
-                            status: "pending",
-                          }).catch(() => {})
-                        }
-                      }
+                      await sendPublicReplySafe()
+                      await sendCommentDMSafe(content)
                     }
         }
       }
