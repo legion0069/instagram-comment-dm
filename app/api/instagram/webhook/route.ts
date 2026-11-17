@@ -300,11 +300,18 @@ export async function POST(request: NextRequest) {
           if (qRes.ok) {
             await supabase.from("dm_queue").update({ status: "sent" }).eq("id", item.id)
             console.log(`[queue] ✅ Delivered queued DM to ${item.recipient_id}`)
-          } else if (qRes.error?.code === 4) {
+          } else if (qRes.error?.code === 4 && (item.attempts || 0) < 3) {
             await supabase.from("dm_queue").update({
               send_at: new Date(Date.now() + 5 * 60 * 1000).toISOString(),
               attempts: (item.attempts || 0) + 1,
             }).eq("id", item.id)
+          } else {
+            // Error 10 (outside 24h messaging window) or non-retryable error — mark failed so it doesn't loop
+            await supabase.from("dm_queue").update({
+              status: "failed",
+              attempts: (item.attempts || 0) + 1,
+            }).eq("id", item.id)
+            console.warn(`[queue] ⚠️ Queued DM to ${item.recipient_id} cannot be delivered (#${qRes.error?.code || 'err'}): ${qRes.error?.message || ''}`)
           }
         }
       } catch (err) {
