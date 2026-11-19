@@ -330,7 +330,7 @@ export async function POST(request: NextRequest) {
           const commentId = change.value.id
           const commentText = change.value.text.toLowerCase().trim()
           const senderId = change.value.from.id
-          const mediaId = change.value.media.id
+          const mediaId = String(change.value.media?.id || "").trim()
           const parentId = change.value.parent_id || null
 
           // 1. Skip self-comments from the account itself (including bot's own replies)
@@ -352,34 +352,49 @@ export async function POST(request: NextRequest) {
             continue
           }
 
-          console.log(`[webhook] Comment received on media ${mediaId} from ${senderId}: "${commentText}"`)
+          console.log(`[webhook] Comment received on media "${mediaId}" from ${senderId}: "${commentText}"`)
 
           const commentAutomations = automations.filter((a: any) => a.trigger_source === "comment")
 
+          const normalizeMediaId = (id: any): string => {
+            if (!id || id === "null" || id === "undefined") return ""
+            return String(id).trim()
+          }
+
           // Priority: specific post reply-all → specific post keyword → global keyword
-          let match = commentAutomations.find(
-            (a: any) => a.specific_media_id === mediaId && a.trigger_type === "reply_all",
-          )
+          let match = commentAutomations.find((a: any) => {
+            const ruleMediaId = normalizeMediaId(a.specific_media_id)
+            return ruleMediaId && ruleMediaId === mediaId && a.trigger_type === "reply_all"
+          })
+
           if (!match) {
-            match = commentAutomations.find(
-              (a: any) =>
-                a.specific_media_id === mediaId &&
+            match = commentAutomations.find((a: any) => {
+              const ruleMediaId = normalizeMediaId(a.specific_media_id)
+              return ruleMediaId && ruleMediaId === mediaId &&
                 a.trigger_type === "keyword" &&
-                keywordMatches(a.trigger_value, commentText),
-            )
+                keywordMatches(a.trigger_value, commentText)
+            })
           }
+
           if (!match) {
-            match = commentAutomations.find(
-              (a: any) =>
-                !a.specific_media_id &&
+            // Only fall back to global rule if rule explicitly has NO specific_media_id
+            match = commentAutomations.find((a: any) => {
+              const ruleMediaId = normalizeMediaId(a.specific_media_id)
+              return !ruleMediaId &&
                 a.trigger_type === "keyword" &&
-                keywordMatches(a.trigger_value, commentText),
-            )
+                keywordMatches(a.trigger_value, commentText)
+            })
+            if (match) {
+              console.log(`[webhook] 🌐 No specific match for media "${mediaId}". Matched global rule "${match.name}" (ID: ${match.id})`)
+            }
           }
+
           if (!match) {
-            console.log(`[webhook] No rule match for comment "${commentText}" on media ${mediaId}`)
+            console.log(`[webhook] No rule match for comment "${commentText}" on media "${mediaId}". Active rules:`, commentAutomations.map((a: any) => ({ name: a.name, specific_media_id: a.specific_media_id, triggers: a.trigger_value })))
             continue
           }
+
+          console.log(`[webhook] ✅ Matched rule: "${match.name}" (Rule ID: ${match.id}, Rule Media ID: "${match.specific_media_id}", Comment Media ID: "${mediaId}")`)
 
                     const content = parseContent(match.response_content)
 
